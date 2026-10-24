@@ -26,6 +26,13 @@ function emojiFor(item) {
   return foodArt.default;
 }
 const palettes = ['peach', 'mint', 'lavender', 'butter', 'rose'];
+const nextStatuses = {
+  PENDING: ['CONFIRMED', 'CANCELLED'],
+  CONFIRMED: ['PREPARING', 'CANCELLED'],
+  PREPARING: ['DELIVERED', 'CANCELLED'],
+  DELIVERED: [],
+  CANCELLED: []
+};
 
 function App() {
   const [menu, setMenu] = useState([]);
@@ -40,6 +47,11 @@ function App() {
   const [error, setError] = useState('');
   const [order, setOrder] = useState(null);
   const [trackingMode, setTrackingMode] = useState(false);
+  const [managementMode, setManagementMode] = useState(false);
+  const [orders, setOrders] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersError, setOrdersError] = useState('');
+  const [updatingOrderId, setUpdatingOrderId] = useState('');
   const [lookupId, setLookupId] = useState('');
   const [trackedOrder, setTrackedOrder] = useState(null);
   const [lookupLoading, setLookupLoading] = useState(false);
@@ -85,6 +97,42 @@ function App() {
     });
   }
 
+  async function loadOrders() {
+    setOrdersLoading(true);
+    setOrdersError('');
+    try {
+      const response = await fetch('/api/orders');
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not load orders.');
+      setOrders(data.items || []);
+    } catch (err) {
+      setOrdersError(err.message || 'Could not reach the Order Service.');
+    } finally {
+      setOrdersLoading(false);
+    }
+  }
+
+  async function updateOrderStatus(id, status) {
+    setUpdatingOrderId(id);
+    setOrdersError('');
+    try {
+      const response = await fetch('/api/orders/' + encodeURIComponent(id) + '/status', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not update order status.');
+      setOrders((current) => current.map((item) => item.id === id ? data : item)
+        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))));
+      if (trackedOrder && trackedOrder.id === id) setTrackedOrder(data);
+    } catch (err) {
+      setOrdersError(err.message || 'Could not update order status.');
+    } finally {
+      setUpdatingOrderId('');
+    }
+  }
+
   async function findOrder(event) {
     event.preventDefault();
     setLookupError('');
@@ -103,6 +151,22 @@ function App() {
       setTrackedOrder(data);
     } catch (err) {
       setLookupError(err.message || 'Could not reach the Order Service. Try again.');
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
+  async function refreshTrackedOrder() {
+    if (!trackedOrder?.id) return;
+    setLookupError('');
+    setLookupLoading(true);
+    try {
+      const response = await fetch('/api/orders/' + encodeURIComponent(trackedOrder.id));
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not refresh order status.');
+      setTrackedOrder(data);
+    } catch (err) {
+      setLookupError(err.message || 'Could not refresh order status.');
     } finally {
       setLookupLoading(false);
     }
@@ -141,14 +205,32 @@ function App() {
         <span className="brand-mark"><UtensilsCrossed size={21} strokeWidth={2.5} /></span>
         <span>crumb<span className="brand-dot">.</span><small>YOUR LITTLE FOOD PLACE</small></span>
       </a>
-      <nav className="desktop-nav"><a href="#menu" onClick={() => setTrackingMode(false)}>Menu</a><a href="#how-it-works" onClick={() => setTrackingMode(false)}>How it works</a><button className="nav-link" onClick={() => { setTrackingMode(true); setOrder(null); setShowCart(false); setLookupError(''); setTrackedOrder(null); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Track order</button></nav>
+      <nav className="desktop-nav"><a href="#menu" onClick={() => { setTrackingMode(false); setManagementMode(false); }}>Menu</a><a href="#how-it-works" onClick={() => { setTrackingMode(false); setManagementMode(false); }}>How it works</a><button className="nav-link" onClick={() => { setTrackingMode(true); setManagementMode(false); setOrder(null); setShowCart(false); setLookupError(''); setTrackedOrder(null); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Track order</button><button className="nav-link" onClick={() => { setManagementMode(true); setTrackingMode(false); setOrder(null); setShowCart(false); window.scrollTo({ top: 0, behavior: 'smooth' }); loadOrders(); }}>Manage orders</button></nav>
       <button className="cart-button" onClick={() => { setShowCart(true); setCheckout(false); }} aria-label="Open cart">
         <ShoppingBag size={18} /><span>Your bag</span><b>{count}</b>
       </button>
     </header>
 
     <main>
-      {trackingMode ? <section className="tracking-screen">
+      {managementMode ? <section className="management-screen">
+        <div className="tracking-icon"><ChefHat size={29}/></div>
+        <p className="eyebrow">DEMO ADMIN PANEL</p>
+        <h1>Orders, <em>at a glance.</em></h1>
+        <p className="tracking-copy">Review saved orders and update their demo status. No login is configured for this learning project.</p>
+        <div className="management-toolbar"><span>{orders.length} orders found · newest first</span><button className="secondary-button" onClick={loadOrders} disabled={ordersLoading}><RotateCw size={15}/> Refresh</button></div>
+        {ordersError && <div className="notice error-notice"><CircleAlert size={18}/><span>{ordersError}</span></div>}
+        {ordersLoading ? <div className="management-empty">Loading orders…</div> : orders.length === 0 ? <div className="management-empty">No orders have been placed yet. Try ordering something from the menu first.</div> :
+          <div className="management-list">{orders.map((item) => <article className="management-order" key={item.id}>
+            <div className="management-order-head"><div><span className="management-label">ORDER REFERENCE</span><strong className="tracked-id">{item.id}</strong></div><span className="status-pill">{item.status || 'PENDING'}</span></div>
+            <div className="management-order-info"><div><span>Customer</span><strong>{item.customerEmail}</strong></div><div><span>Total</span><strong>{money(item.total)}</strong></div><div><span>Placed</span><strong>{item.createdAt ? new Date(item.createdAt).toLocaleString() : 'Unknown'}</strong></div></div>
+            <div className="management-order-items">{(item.items || []).map((line, index) => <span key={line.menuItemId || index}>{line.name} × {line.quantity}</span>)}</div>
+            <div className="status-actions"><span>Set status</span>
+              {['CONFIRMED', 'PREPARING', 'DELIVERED', 'CANCELLED'].map((status) => <button key={status} className={(item.status || 'PENDING') === status ? 'status-action active' : 'status-action'} disabled={updatingOrderId === item.id || !(nextStatuses[item.status || 'PENDING'] || []).includes(status)} onClick={() => updateOrderStatus(item.id, status)}>{updatingOrderId === item.id ? 'Saving…' : status}</button>)}
+            </div>
+          </article>)}</div>}
+        <p className="tracking-demo-note">This panel is intentionally open for local demos. Do not expose it publicly; status changes are not authenticated.</p>
+        <button className="text-button tracking-back" onClick={() => { setManagementMode(false); }}>← Back to menu</button>
+      </section> : trackingMode ? <section className="tracking-screen">
         <div className="tracking-icon"><Search size={29}/></div>
         <p className="eyebrow">A LITTLE ORDER UPDATE</p>
         <h1>Where’s your <em>order?</em></h1>
@@ -165,6 +247,9 @@ function App() {
           <h3>Items in this order</h3>
           {(trackedOrder.items || []).map((item, index) => <div className="tracked-line" key={item.menuItemId || index}><span>{item.name} <small>× {item.quantity}</small></span><strong>{money(item.lineTotal)}</strong></div>)}
           <div className="tracked-total"><span>Order total</span><strong>{money(trackedOrder.total)}</strong></div>
+          <div className="status-history-heading"><h3>Status history</h3><button className="secondary-button" onClick={refreshTrackedOrder} disabled={lookupLoading}><RotateCw size={14}/> Refresh status</button></div>
+          <div className="status-history-list">{(trackedOrder.statusHistory || [{ status: trackedOrder.status || 'PENDING', at: trackedOrder.updatedAt || trackedOrder.createdAt }]).map((entry, index) => <div className="status-history-entry" key={entry.status + '-' + index}><span className="history-dot"/><div><strong>{entry.status}</strong><small>{entry.at ? new Date(entry.at).toLocaleString() : 'Time unavailable'}</small></div></div>)}</div>
+          {lookupError && <p className="inline-error"><CircleAlert size={15}/>{lookupError}</p>}
         </div>}
         <button className="text-button tracking-back" onClick={() => { setTrackingMode(false); setTrackedOrder(null); setLookupError(''); }}>← Back to menu</button>
         <p className="tracking-demo-note">Demo note: order status is stored as PENDING. This project does not have live delivery tracking.</p>

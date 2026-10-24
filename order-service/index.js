@@ -1,15 +1,23 @@
 const express = require('express');
 const { randomUUID } = require('crypto');
-const { GetCommand, PutCommand } = require('@aws-sdk/lib-dynamodb');
+const { GetCommand, PutCommand, UpdateCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
 const db = require('./db');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 
 const PORT = Number(process.env.PORT) || 3003;
 const ORDERS_TABLE = process.env.ORDERS_TABLE || 'Orders';
 const MENU_TABLE = process.env.MENU_ITEMS_TABLE || 'MenuItems';
 const P = '/api/orders';
+const ALLOWED_STATUSES = ['PENDING', 'CONFIRMED', 'PREPARING', 'DELIVERED', 'CANCELLED'];
+const STATUS_TRANSITIONS = {
+  PENDING: ['CONFIRMED', 'CANCELLED'],
+  CONFIRMED: ['PREPARING', 'CANCELLED'],
+  PREPARING: ['DELIVERED', 'CANCELLED'],
+  DELIVERED: [],
+  CANCELLED: []
+};
 
 const wrap = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
@@ -18,15 +26,15 @@ app.get(P + '/health', (req, res) => {
   res.json({ status: 'up', service: 'order-service' });
 });
 
-// Create an order. Prices are read from DynamoDB, never trusted from the client.
+// Create an order. Prices are always read from DynamoDB, not trusted from the browser.
 app.post(P, wrap(async (req, res) => {
-  const { customerEmail, items } = req.body;
+  const { customerEmail, items } = req.body || {};
 
-  if (typeof customerEmail !== 'string' || !customerEmail.trim()) {
-    return res.status(400).json({ error: 'customerEmail is required' });
+  if (typeof customerEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail.trim())) {
+    return res.status(400).json({ error: 'A valid customerEmail is required' });
   }
-  if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ error: 'items must be a non-empty array' });
+  if (!Array.isArray(items) || items.length === 0 || items.length > 50) {
+    return res.status(400).json({ error: 'items must be a non-empty array with at most 50 entries' });
   }
   if (items.some((item) =>
     !item || typeof item.menuItemId !== 'string' ||
@@ -37,7 +45,6 @@ app.post(P, wrap(async (req, res) => {
     });
   }
 
-  // Resolve each menu item from the database so clients cannot choose their own prices.
   const orderItems = [];
   for (const requested of items) {
     const result = await db.send(new GetCommand({
@@ -51,7 +58,7 @@ app.post(P, wrap(async (req, res) => {
     if (result.Item.available === false) {
       return res.status(400).json({ error: 'menu item is unavailable: ' + result.Item.name });
     }
-    if (typeof result.Item.price !== 'number' || result.Item.price < 0) {
+    if (typeof result.Item.price !== 'number' || !Number.isFinite(result.Item.price) || result.Item.price < 0) {
       return res.status(500).json({ error: 'menu item has an invalid price configuration' });
     }
 
@@ -71,13 +78,28 @@ app.post(P, wrap(async (req, res) => {
     items: orderItems,
     total,
     status: 'PENDING',
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    statusHistory: [{ status: 'PENDING', at: new Date().toISOString() }]
   };
 
   await db.send(new PutCommand({ TableName: ORDERS_TABLE, Item: order }));
   res.status(201).json(order);
 }));
 
+// Demo-only order list for the lightweight management panel.
+app.get(P, wrap(async (req, res) => {
+  const result = await db.send(new ScanCommand({
+    TableName: ORDERS_TABLE,
+    Limit: 100
+  }));
+  const orders = (result.Items || []).sort((a, b) =>
+    String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+  );
+  res.json({ items: orders });
+}));
+
+// Retrieve an order by ID for the demo tracking page.
 app.get(P + '/:id', wrap(async (req, res) => {
   const result = await db.send(new GetCommand({
     TableName: ORDERS_TABLE,
@@ -88,7 +110,55 @@ app.get(P + '/:id', wrap(async (req, res) => {
   res.json(result.Item);
 }));
 
+// Demo-only status update endpoint. No login is implemented for this learning project.
+app.patch(P + '/:id/status', wrap(async (req, res) => {
+  const status = req.body && req.body.status;
+  if (typeof status !== 'string' || !ALLOWED_STATUSES.includes(status)) {
+    return res.status(400).json({ error: 'status must be one of: ' + ALLOWED_STATUSES.join(', ') });
+  }
+
+  const existing = await db.send(new GetCommand({
+    TableName: ORDERS_TABLE,
+    Key: { id: req.params.id }
+  }));
+  if (!existing.Item) return res.status(404).json({ error: 'order not found' });
+
+  const currentStatus = existing.Item.status || 'PENDING';
+  if (status === currentStatus) return res.json(existing.Item);
+  if (!(STATUS_TRANSITIONS[currentStatus] || []).includes(status)) {
+    return res.status(409).json({
+      error: 'cannot change order from ' + currentStatus + ' to ' + status,
+      allowedNextStatuses: STATUS_TRANSITIONS[currentStatus] || []
+    });
+  }
+
+  const now = new Date().toISOString();
+  const history = [...(existing.Item.statusHistory || [{ status: currentStatus, at: existing.Item.createdAt || now }]),
+    { status, at: now }];
+
+  const updated = await db.send(new UpdateCommand({
+    TableName: ORDERS_TABLE,
+    Key: { id: req.params.id },
+    UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt, statusHistory = :history',
+    ConditionExpression: '#status = :expectedStatus',
+    ExpressionAttributeNames: { '#status': 'status' },
+    ExpressionAttributeValues: {
+      ':status': status,
+      ':updatedAt': now,
+      ':history': history,
+      ':expectedStatus': currentStatus
+    },
+    ReturnValues: 'ALL_NEW'
+  }));
+
+  res.json(updated.Attributes);
+}));
+
 app.use((err, req, res, next) => {
+  if (err.statusCode === 409) return res.status(409).json({ error: err.message, order: err.latestOrder });
+  if (err.name === 'ConditionalCheckFailedException') {
+    return res.status(409).json({ error: 'order status changed; reload and try again' });
+  }
   console.error(err);
   res.status(500).json({ error: 'internal error' });
 });
