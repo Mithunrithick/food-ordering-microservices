@@ -39,6 +39,11 @@ function App() {
   const [placing, setPlacing] = useState(false);
   const [error, setError] = useState('');
   const [order, setOrder] = useState(null);
+  const [trackingMode, setTrackingMode] = useState(false);
+  const [lookupId, setLookupId] = useState('');
+  const [trackedOrder, setTrackedOrder] = useState(null);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -80,6 +85,29 @@ function App() {
     });
   }
 
+  async function findOrder(event) {
+    event.preventDefault();
+    setLookupError('');
+    setTrackedOrder(null);
+    const id = lookupId.trim();
+    if (!id) {
+      setLookupError('Enter the order reference first.');
+      return;
+    }
+
+    setLookupLoading(true);
+    try {
+      const response = await fetch('/api/orders/' + encodeURIComponent(id));
+      const data = await response.json();
+      if (!response.ok) throw new Error(response.status === 404 ? 'No order found with that reference.' : (data.error || 'Could not look up this order.'));
+      setTrackedOrder(data);
+    } catch (err) {
+      setLookupError(err.message || 'Could not reach the Order Service. Try again.');
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
   async function placeOrder(event) {
     event.preventDefault();
     setError('');
@@ -109,18 +137,38 @@ function App() {
   return <div className="app-shell">
     <div className="top-strip"><Sparkles size={14} /> GOOD FOOD. GOOD MOOD. <span>Made fresh, just for you.</span></div>
     <header className="site-header">
-      <a className="brand" href="#" onClick={(e) => { e.preventDefault(); setOrder(null); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+      <a className="brand" href="#" onClick={(e) => { e.preventDefault(); setOrder(null); setTrackingMode(false); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
         <span className="brand-mark"><UtensilsCrossed size={21} strokeWidth={2.5} /></span>
         <span>crumb<span className="brand-dot">.</span><small>YOUR LITTLE FOOD PLACE</small></span>
       </a>
-      <nav className="desktop-nav"><a href="#menu">Menu</a><a href="#how-it-works">How it works</a><a href="#about">Our vibe</a></nav>
+      <nav className="desktop-nav"><a href="#menu" onClick={() => setTrackingMode(false)}>Menu</a><a href="#how-it-works" onClick={() => setTrackingMode(false)}>How it works</a><button className="nav-link" onClick={() => { setTrackingMode(true); setOrder(null); setShowCart(false); setLookupError(''); setTrackedOrder(null); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Track order</button></nav>
       <button className="cart-button" onClick={() => { setShowCart(true); setCheckout(false); }} aria-label="Open cart">
         <ShoppingBag size={18} /><span>Your bag</span><b>{count}</b>
       </button>
     </header>
 
     <main>
-      {order ? <section className="success-screen">
+      {trackingMode ? <section className="tracking-screen">
+        <div className="tracking-icon"><Search size={29}/></div>
+        <p className="eyebrow">A LITTLE ORDER UPDATE</p>
+        <h1>Where’s your <em>order?</em></h1>
+        <p className="tracking-copy">Enter the order reference from your confirmation screen to look up the order saved by this demo app.</p>
+        <form className="tracking-form" onSubmit={findOrder}>
+          <label htmlFor="order-reference">Order reference</label>
+          <input id="order-reference" value={lookupId} onChange={(e) => setLookupId(e.target.value)} placeholder="Paste your order ID" required autoComplete="off"/>
+          {lookupError && <p className="inline-error"><CircleAlert size={15}/>{lookupError}</p>}
+          <button className="primary-button full-button" type="submit" disabled={lookupLoading}>{lookupLoading ? 'Looking up…' : 'Find my order'} <ArrowRight size={17}/></button>
+        </form>
+        {trackedOrder && <div className="tracked-order-card">
+          <div className="tracked-order-top"><div><p className="eyebrow">ORDER FOUND</p><strong className="tracked-id">{trackedOrder.id}</strong></div><span className="status-pill">{trackedOrder.status || 'PENDING'}</span></div>
+          <div className="tracked-order-meta"><div><span>Placed by</span><strong>{trackedOrder.customerEmail}</strong></div><div><span>Order total</span><strong>{money(trackedOrder.total)}</strong></div><div><span>Created</span><strong>{trackedOrder.createdAt ? new Date(trackedOrder.createdAt).toLocaleString() : 'Not available'}</strong></div></div>
+          <h3>Items in this order</h3>
+          {(trackedOrder.items || []).map((item, index) => <div className="tracked-line" key={item.menuItemId || index}><span>{item.name} <small>× {item.quantity}</small></span><strong>{money(item.lineTotal)}</strong></div>)}
+          <div className="tracked-total"><span>Order total</span><strong>{money(trackedOrder.total)}</strong></div>
+        </div>}
+        <button className="text-button tracking-back" onClick={() => { setTrackingMode(false); setTrackedOrder(null); setLookupError(''); }}>← Back to menu</button>
+        <p className="tracking-demo-note">Demo note: order status is stored as PENDING. This project does not have live delivery tracking.</p>
+      </section> : order ? <section className="success-screen">
         <div className="success-icon"><BadgeCheck size={42} /></div>
         <p className="eyebrow">ORDER RECEIVED</p>
         <h1>That’s a wrap.<br/><em>Your food journey starts here.</em></h1>
@@ -131,7 +179,10 @@ function App() {
           <div><span>Order total</span><strong>{money(order.total)}</strong></div>
           <div><span>Confirmation email</span><strong>{order.customerEmail}</strong></div>
         </div>
-        <button className="primary-button" onClick={() => { setOrder(null); setActiveCategory('All'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Back to the menu <ArrowRight size={17}/></button>
+        <div className="success-actions">
+          <button className="primary-button" onClick={() => { setLookupId(order.id); setTrackedOrder(order); setLookupError(''); setTrackingMode(true); setOrder(null); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Track this order <ArrowRight size={17}/></button>
+          <button className="secondary-button" onClick={() => { setOrder(null); setTrackingMode(false); setActiveCategory('All'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>Back to the menu</button>
+        </div>
       </section> : <>
         <section className="hero">
           <div className="hero-copy">

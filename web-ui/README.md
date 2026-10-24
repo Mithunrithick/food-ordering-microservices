@@ -34,7 +34,8 @@ Vite proxies `/api/menu` to `http://127.0.0.1:3002` and `/api/orders` to `http:/
 - The cart and quantities are kept in the browser while you use the page.
 - Checkout asks for an email only; no account or login is required.
 - Orders are created by Order Service and stored in the `Orders` table.
+- The confirmation screen has a **Track this order** action; the **Track order** header link also lets you look up an order by its reference.
 - The UI shows menu-item totals; the backend calculates and saves the order total from DynamoDB prices.
-- No real payment is collected and no real delivery is arranged.
+- No real payment is collected and no real delivery is arranged. Order status currently remains `PENDING`; there is no live delivery tracking.
 
 This is a learning/demo UI, not a production ordering system.
