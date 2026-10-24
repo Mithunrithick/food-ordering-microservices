@@ -56,7 +56,7 @@ function App() {
     return () => { alive = false; };
   }, [reloadKey]);
 
-  const categories = useMemo(() => ['All', ...new Set(menu.map((i) => i.category).filter(Boolean))], [menu]);
+  const categories = useMemo(() => ['All', ...new Set(menu.filter((i) => i.available !== false).map((i) => i.category).filter(Boolean))], [menu]);
   const visibleMenu = useMemo(() => menu.filter((item) => {
     const matchesCategory = activeCategory === 'All' || item.category === activeCategory;
     const matchesSearch = (item.name + ' ' + (item.description || '') + ' ' + item.category)
@@ -160,7 +160,7 @@ function App() {
         <section className="menu-section" id="menu">
           <div className="section-heading">
             <div><p className="eyebrow"><span className="eyebrow-line"/> THE GOOD STUFF</p><h2>Find your <em>happy plate.</em></h2><p className="section-subtitle">A little something for every kind of craving.</p></div>
-            <div className="menu-count">{menu.length.toString().padStart(2, '0')} <span>MENU ITEMS</span></div>
+            <div className="menu-count">{menu.filter((item) => item.available !== false).length.toString().padStart(2, '0')} <span>MENU ITEMS</span></div>
           </div>
           <div className="menu-tools">
             <div className="category-tabs" role="tablist" aria-label="Filter by category">

@@ -2,6 +2,16 @@
 
 React + Vite frontend for the food-ordering microservices learning project.
 
+## Seed demo menu items
+
+Start the Menu Service on host port **3002**, then run from the repository root:
+
+```bash
+node scripts/seed-demo-menu.js
+```
+
+The script creates sample dishes in the `MenuItems` DynamoDB table. It skips dishes that already exist, so it can be run again without duplicating the sample menu. It also renames the temporary burger used during API checks. The unavailable temporary pizza record is left untouched.
+
 ## Run locally
 
 Start the Menu Service on host port **3002** and the Order Service on host port **3004**. Both services should have access to the AWS credentials needed for DynamoDB.
@@ -24,7 +34,7 @@ Vite proxies `/api/menu` to `http://127.0.0.1:3002` and `/api/orders` to `http:/
 - The cart and quantities are kept in the browser while you use the page.
 - Checkout asks for an email only; no account or login is required.
 - Orders are created by Order Service and stored in the `Orders` table.
-- A small demo delivery fee is displayed by the UI; the backend order total contains menu item totals only.
+- The UI shows menu-item totals; the backend calculates and saves the order total from DynamoDB prices.
 - No real payment is collected and no real delivery is arranged.
 
 This is a learning/demo UI, not a production ordering system.
