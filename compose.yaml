@@ -1,0 +1,52 @@
+services:
+  menu-service:
+    build:
+      context: ./menu-service
+    environment:
+      AWS_REGION: ap-south-1
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
+    ports:
+      - "3002:3001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/menu/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  order-service:
+    build:
+      context: ./order-service
+    environment:
+      AWS_REGION: ap-south-1
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
+    ports:
+      - "3004:3003"
+    depends_on:
+      menu-service:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3003/api/orders/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  web-ui:
+    build:
+      context: ./web-ui
+    environment:
+      MENU_SERVICE_URL: http://menu-service:3001
+      ORDER_SERVICE_URL: http://order-service:3003
+    ports:
+      - "5173:5173"
+    depends_on:
+      menu-service:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+    restart: unless-stopped
